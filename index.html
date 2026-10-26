@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Konvolusi & Histogram Equalization RGB - Space Edition</title>
+<style>
+  body {
+    background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+    color: #e0e6ed;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    min-height: 100vh;
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  h3 {
+    color: #63b3ed;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px rgba(99, 179, 237, 0.6);
+  }
+  .main-card {
+    background: rgba(22, 25, 43, 0.75);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+    text-align: center;
+    max-width: 95%;
+  }
+  canvas {
+    border: 1px solid #4a5568;
+    border-radius: 8px;
+    margin-top: 5px;
+    background-color: #000;
+  }
+  #resolution { margin-top: 10px; color: #00f2fe; font-weight: bold; }
+  button {
+    margin-top: 8px; margin-right: 5px;
+    background: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%);
+    color: white; border: none; padding: 10px 16px; border-radius: 6px;
+    cursor: pointer; font-weight: 600; transition: all 0.3s ease;
+  }
+  button:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(0, 198, 255, 0.5); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .channel-container { display: flex; gap: 12px; margin-top: 15px; flex-wrap: wrap; justify-content: center; }
+  .channel-block {
+    text-align: center; background: rgba(11, 13, 23, 0.8);
+    border: 1px solid rgba(99, 179, 237, 0.2); padding: 10px; border-radius: 8px;
+  }
+  .channel-block p { margin-top: 6px; font-size: 13px; color: #cbd5e0; }
+  
+  .hist-container {
+    display: none;
+    margin-top: 20px;
+    justify-content: center;
+    gap: 20px;
+  }
+  .hist-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(11, 13, 23, 0.8);
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(99, 179, 237, 0.2);
+  }
+  .hist-tables {
+    max-height: 150px;
+    overflow-y: auto;
+    margin-top: 10px;
+  }
+  table {
+    border-collapse: collapse;
+    width: 140px;
+    font-size: 11px;
+    color: #e0e6ed;
+  }
+  th, td {
+    border: 1px solid #444;
+    padding: 3px 5px;
+    text-align: center;
+  }
+  th { background-color: #1a202c; color: #63b3ed; }
+</style>
+</head>
+<body>
+
+<div class="main-card">
+  <h3>🌌 Konvolusi & Histogram Equalization RGB</h3>
+  <canvas id="gambar" width="300" height="300"></canvas><br>
+  <input type="file" id="file1" accept=".jpg, .jpeg, .png, .bmp"><br>
+  <div id="resolution"></div>
+  <button id="convBtn" onclick="applyConvolution()" disabled>Konvolusi</button>
+  <button id="histBtn" onclick="histogramEqualizationRGB()" disabled>Histogram Equalization RGB</button>
+  <div id="channels" class="channel-container"></div>
+
+  <div id="histContainer" class="hist-container">
+    <div class="hist-section">
+      <canvas id="histBefore" width="256" height="100"></canvas>
+      <p>Histogram Sebelum (Grayscale Avg)</p>
+      <div class="hist-tables" id="tableBefore"></div>
+    </div>
+    <div class="hist-section">
+      <canvas id="histAfter" width="256" height="100"></canvas>
+      <p>Histogram Sesudah (RGB Equalized)</p>
+      <div class="hist-tables" id="tableAfter"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let originalImage = null;
+let width = 0, height = 0;
+
+document.getElementById("file1").addEventListener("change", function () {
+  loadImage(this, "gambar");
+});
+
+function loadImage(fileInput, canvasId) {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext("2d");
+  const img = new Image();
+  img.onload = function () {
+    canvas.width = img.width;
+    canvas.height = img.height;
+    width = img.width;
+    height = img.height;
+    ctx.drawImage(img, 0, 0);
+    originalImage = img;
+    document.getElementById("convBtn").disabled = false;
+    document.getElementById("histBtn").disabled = false;
+    document.getElementById("resolution").textContent = `Resolution: ${img.width} x ${img.height}`;
+    clearChannels();
+    document.getElementById("histContainer").style.display = "none";
+  };
+  img.src = URL.createObjectURL(file);
+}
+
+function clearChannels() {
+  document.getElementById("channels").innerHTML = "";
+}
+
+function createChannelCanvas(Label, imgData) {
+  const container = document.getElementById("channels");
+  const block = document.createElement("div");
+  block.className = "channel-block";
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  ctx.putImageData(imgData, 0, 0);
+  const caption = document.createElement("p");
+  caption.textContent = Label;
+  block.appendChild(canvas);
+  block.appendChild(caption);
+  container.appendChild(block);
+}
+
+// ===== LESSON 2: KONVOLUSI =====
+function applyConvolution() {
+  if (!originalImage) return;
+  clearChannels();
+  document.getElementById("histContainer").style.display = "none";
+  const canvas = document.getElementById("gambar");
+  const ctx = canvas.getContext("2d");
+  const imgData = ctx.getImageData(0, 0, width, height);
+  const kernel = [
+    [0, 1, 0],
+    [1, 5, 1],
+    [0, 1, 0]
+  ];
+  const kSize = 3;
+  const offset = Math.floor(kSize / 2);
+  const newImgData = ctx.createImageData(width, height);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let r = 0, g = 0, b = 0;
+      for (let ky = 0; ky < kSize; ky++) {
+        for (let kx = 0; kx < kSize; kx++) {
+          const px = Math.min(width - 1, Math.max(0, x + kx - offset));
+          const py = Math.min(height - 1, Math.max(0, y + ky - offset));
+          const i = (py * width + px) * 4;
+          r += imgData.data[i] * kernel[ky][kx];
+          g += imgData.data[i + 1] * kernel[ky][kx];
+          b += imgData.data[i + 2] * kernel[ky][kx];
+        }
+      }
+      const i = (y * width + x) * 4;
+      newImgData.data[i] = Math.min(Math.max(r, 0), 255);
+      newImgData.data[i + 1] = Math.min(Math.max(g, 0), 255);
+      newImgData.data[i + 2] = Math.min(Math.max(b, 0), 255);
+      newImgData.data[i + 3] = 255;
+    }
+  }
+  createChannelCanvas("Konvolusi (Penajaman)", newImgData);
+}
+
+// ===== TASK 1: HISTOGRAM EQUALIZATION RGB =====
+function histogramEqualizationRGB() {
+  if (!originalImage) return;
+  clearChannels();
+  const canvas = document.getElementById("gambar");
+  const ctx = canvas.getContext("2d");
+  const imgData = ctx.getImageData(0, 0, width, height);
+  const totalPixels = width * height;
+
+  let histR = new Array(256).fill(0);
+  let histG = new Array(256).fill(0);
+  let histB = new Array(256).fill(0);
+  let histBeforeAvg = new Array(256).fill(0);
+
+  for (let i = 0; i < imgData.data.length; i += 4) {
+    const r = imgData.data[i];
+    const g = imgData.data[i + 1];
+    const b = imgData.data[i + 2];
+    histR[r]++;
+    histG[g]++;
+    histB[b]++;
+    const avg = Math.round((r + g + b) / 3);
+    histBeforeAvg[avg]++;
+  }
+
+  // Hitung CDF untuk masing-masing channel R, G, B
+  function getCDF(hist) {
+    let cdf = [], sum = 0;
+    hist.forEach(v => {
+      sum += v;
+      cdf.push(sum / totalPixels);
+    });
+    return cdf;
+  }
+
+  const cdfR = getCDF(histR);
+  const cdfG = getCDF(histG);
+  const cdfB = getCDF(histB);
+
+  const newImgData = ctx.createImageData(width, height);
+  let histAfterAvg = new Array(256).fill(0);
+
+  for (let i = 0; i < imgData.data.length; i += 4) {
+    const newR = Math.round(cdfR[imgData.data[i]] * 255);
+    const newG = Math.round(cdfG[imgData.data[i + 1]] * 255);
+    const newB = Math.round(cdfB[imgData.data[i + 2]] * 255);
+
+    newImgData.data[i] = newR;
+    newImgData.data[i + 1] = newG;
+    newImgData.data[i + 2] = newB;
+    newImgData.data[i + 3] = 255;
+
+    const avg = Math.round((newR + newG + newB) / 3);
+    histAfterAvg[avg]++;
+  }
+
+  createChannelCanvas("Histogram Equalization RGB", newImgData);
+
+  document.getElementById("histContainer").style.display = "flex";
+  drawHistogram(histBeforeAvg, "histBefore", "#00c6ff");
+  drawTable(histBeforeAvg, "tableBefore");
+  drawHistogram(histAfterAvg, "histAfter", "#00f2fe");
+  drawTable(histAfterAvg, "tableAfter");
+}
+
+function drawHistogram(hist, canvasId, color) {
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const maxVal = Math.max(...hist);
+  for (let i = 0; i < hist.length; i++) {
+    const h = (hist[i] / (maxVal || 1)) * canvas.height;
+    ctx.fillStyle = color || "#ffffff";
+    ctx.fillRect(i, canvas.height - h, 1, h);
+  }
+}
+
+function drawTable(hist, containerId) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = "";
+  let table = "<table><tr><th>Pixel</th><th>Freq</th></tr>";
+  for (let i = 0; i < hist.length; i++) {
+    table += `<tr><td>${i}</td><td>${hist[i]}</td></tr>`;
+  }
+  table += "</table>";
+  container.innerHTML = table;
+}
+</script>
+</body>
+</html>
